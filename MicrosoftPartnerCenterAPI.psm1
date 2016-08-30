@@ -33,7 +33,7 @@ function Get-MPCAzureADToken {
 .DESCRIPTION
     Long description
 .EXAMPLE
-    Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential -CustomerDomainPrefix netgain
+    Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential) -PartnerDomainPrefix netgain
 #>
 function Get-MPCToken {
     [CmdletBinding()]
@@ -65,7 +65,7 @@ function Get-MPCToken {
 .DESCRIPTION
     Long description
 .EXAMPLE
-    $mpcToken = Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential
+    $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
     Get-MPCDomainAvailability -CustomerDomainPrefix 'mydomain' -MPCToken $mpcToken.access_token
 #>
 function Get-MPCDomainAvailability {
@@ -97,7 +97,7 @@ function Get-MPCDomainAvailability {
 .DESCRIPTION
     Long description
 .EXAMPLE
-    $mpcToken = Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential
+    $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
     New-MPCCustomer -CustomerDomainPrefix mydomain -MPCToken $mpcToken.access_token -CompanyName 'My Company' -FirstName 'John' -LastName 'Doe' `
     -Email 'John.Doe@MyAlternateDomain.com -PhoneNumber 5555555555 -AddressLine1 '1 Microsoft Way' -City Redmond -State WA -PostalCode 98052
 #>
@@ -189,7 +189,7 @@ function New-MPCCustomer {
 .DESCRIPTION
     Long description
 .EXAMPLE
-    $mpcToken = Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential
+    $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
     Get-MPCOffers -MPCToken $mpcToken.access_token
 #>
 function Get-MPCOffers {
@@ -217,9 +217,9 @@ function Get-MPCOffers {
 .DESCRIPTION
     Long description
 .EXAMPLE
-    $mpcToken = Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential
-    $mpcOffer = Get-MPCOffers -MPCToken $mpcToken.access_token -ErrorAction Stop -Verbose | select -First 1
-    New-MPCOrder -MPCToken $mpcToken -CustomerID e2dcbfa5-cc31-4062-a76f-34b4c2e92a72 -OfferID $mpcOffer.items.id -Quantity 5
+    $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
+    $mpcOffer = (Get-MPCOffers -MPCToken $mpcToken.access_token).items | select -First 1
+    New-MPCOrder -MPCToken $mpcToken.access_token -CustomerID e2dcbfa5-cc31-4062-a76f-34b4c2e92a72 -OfferID $mpcOffer -Quantity 5
 #>
 function New-MPCOrder {
     [CmdletBinding()]
@@ -267,7 +267,7 @@ function New-MPCOrder {
 .DESCRIPTION
     Long description
 .EXAMPLE
-    $mpcToken = Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential
+    $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
     Remove-MPCCustomer -MPCToken $mpcToken.access_token -CustomerID e2dcbfa5-cc31-4062-a76f-34b4c2e92a72
 #>
 function Remove-MPCCustomer {
@@ -296,7 +296,7 @@ function Remove-MPCCustomer {
 .DESCRIPTION
     Long description
 .EXAMPLE
-    $mpcToken = Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential
+    $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
     Get-MPCCustomer -MPCToken $mpcToken.access_token -Domain netgaintest1.onmicrosoft.com
 #>
 function Get-MPCCustomer {
@@ -328,7 +328,7 @@ https://api.partnercenter.microsoft.com/v1/customers?size=0&filter={"Field":"Dom
 .DESCRIPTION
     Long description
 .EXAMPLE
-    $mpcToken = Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential
+    $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
     Get-MPCSubscriptions -MPCToken $mpcToken.access_token -CustomerID e2dcbfa5-cc31-4062-a76f-34b4c2e92a72
 #>
 function Get-MPCSubscriptions {
@@ -357,7 +357,7 @@ function Get-MPCSubscriptions {
 .DESCRIPTION
     Long description
 .EXAMPLE
-    $mpcToken = Get-MPCToken -ApplicationID $ApplicationID -Credential $Credential
+    $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
     $mpcSubscription = (Get-MPCSubscriptions -MPCToken $mpcToken.access_token -CustomerID e2dcbfa5-cc31-4062-a76f-34b4c2e92a72).items | select -First 1
     Update-MPCSubscription -MPCToken $mpcToken -CustomerID e2dcbfa5-cc31-4062-a76f-34b4c2e92a72 -Subscription $mpcSubscription -Quantity 5
 #>
