@@ -1,4 +1,4 @@
-﻿<#
+<#
 .Synopsis
     Gets an Azure Active Directory authentication token.
 .DESCRIPTION
@@ -219,7 +219,7 @@ function Get-MPCOffers {
 .EXAMPLE
     $mpcToken = Get-MPCToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential)
     $mpcOffer = (Get-MPCOffers -MPCToken $mpcToken.access_token).items | select -First 1
-    New-MPCOrder -MPCToken $mpcToken.access_token -CustomerID e2dcbfa5-cc31-4062-a76f-34b4c2e92a72 -OfferID $mpcOffer -Quantity 5
+    New-MPCOrder -MPCToken $mpcToken.access_token -CustomerID e2dcbfa5-cc31-4062-a76f-34b4c2e92a72 -OfferID $mpcOffer.id -Quantity 5
 #>
 function New-MPCOrder {
     [CmdletBinding()]
@@ -378,6 +378,8 @@ function Update-MPCSubscription {
         [string]$Quantity
     )
     $Subscription.quantity = $Quantity
+    # Must be removed to prevent error
+    $Subscription.psobject.Properties.Remove('billingCycle')
     $body = $Subscription | ConvertTo-Json
     $params = @{
         Uri = "https://api.partnercenter.microsoft.com/v1/customers/$CustomerID/subscriptions/$($Subscription.id)"
