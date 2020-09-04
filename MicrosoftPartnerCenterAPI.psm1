@@ -1,10 +1,10 @@
 <#
 .Synopsis
-    Gets an Azure Active Directory authentication token.
+    Gets an Azure Active Directory authentication token using the Azure Directory Authentication Library.
 .DESCRIPTION
     Long description
 .EXAMPLE
-    Get-MPCAzureADToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -Credential (Get-Credential) -DomainPrefix netgain
+    Get-MPCAzureADToken -ApplicationID f5e4f291-6e60-48c0-bc2e-e72e9a3a0464 -ResourceUri https://api.partnercenter.microsoft.com -Credential (Get-Credential) -Domain netgain.onmicrosoft.com
 #>
 function Get-MPCAzureADToken {
     [CmdletBinding()]
@@ -12,19 +12,152 @@ function Get-MPCAzureADToken {
         # ID of application created in Azure Active Directory
         [Parameter(Mandatory=$true)]
         [string]$ApplicationID,
-        # User credential to access Azure Active Directory
+        # Azure AD Domain
         [Parameter(Mandatory=$true)]
+        [string]$Domain,
+        # Uri of the resource to request the token for
+        [Parameter(Mandatory=$true)]
+        [string]$ResourceUri,
         [pscredential]$Credential,
-        # Partner domain prefix for onmicrosoft.com domain
-        [Parameter(Mandatory=$true)]
-        [string]$DomainPrefix
+        $Secret,
+        [switch]$NullTokenCache,
+        $CustomTokenCache,
+        [switch]$FileCache,
+        [string]$RedirectUri = 'http://localhost'
     )
-    $username = $Credential.Username
-    $password = $Credential.GetNetworkCredential().Password
-    $body = "resource=https://api.partnercenter.microsoft.com&client_id=$ApplicationID&grant_type=password&username=$Username&password=$Password&scope=openid"
     Write-Verbose 'Getting Azure AD token'
-    $mpcAzureAdTokenRequest = Invoke-WebRequest -Uri https://login.windows.net/$DomainPrefix.onmicrosoft.com/oauth2/token -Method Post -Body $body
-    Write-Output ($mpcAzureAdTokenRequest.Content | ConvertFrom-Json)
+    $adalPath = Join-Path -Path $PSScriptRoot -ChildPath '\Microsoft.IdentityModel.Clients.ActiveDirectory.dll'
+    $adalPlatformPath = Join-Path -Path $PSScriptRoot -ChildPath '\Microsoft.IdentityModel.Clients.ActiveDirectory.Platform.dll'
+    Add-Type -Path $adalPath
+    Add-Type -Path $adalPlatformPath
+    if ($Credential -or $Secret) {
+        $body = @{
+            resource = $ResourceUri
+            client_id = $ApplicationID
+        }
+        if ($Credential) {
+            $body.grant_type = 'password'
+            $body.username = $Credential.UserName
+            $body.password = $Credential.GetNetworkCredential().Password
+        }
+        elseif ($Secret) {
+            $body.grant_type = 'client_credentials'
+            $body.client_secret = $secret
+        }
+        $params = @{
+            Uri = "https://login.microsoftonline.com/$Domain/oauth2/token"
+            Method = 'Post'
+            Body = $body
+        }
+        Write-Output (Invoke-RestMethod @params)
+    }
+    else {
+        if ($NullTokenCache) {
+            $authenticationContext = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext("https://login.windows.net/$Domain/",$null)
+        }
+        elseif ($CustomTokenCache) {
+            $authenticationContext = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext("https://login.windows.net/$Domain/",$CustomTokenCache)
+        }
+        elseif ($FileCache) {
+            $assemblies = (
+                (Join-Path -Path $PSScriptRoot -ChildPath '\Microsoft.IdentityModel.Clients.ActiveDirectory.dll'),
+                (Join-Path -Path $PSScriptRoot -ChildPath '\Microsoft.IdentityModel.Clients.ActiveDirectory.Platform.dll'),
+                "System.Runtime, Version=4.0.0.0,Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+                "System.Security"
+            )
+            $source = @"
+                using Microsoft.IdentityModel.Clients;
+                using Microsoft.IdentityModel.Clients.ActiveDirectory;
+                using System.IO;
+                using System.Security.Cryptography;
+        
+                namespace TodoListClient
+                {
+                
+                    // This is a simple persistent cache implementation for a desktop application.
+                    // It uses DPAPI for storing tokens in a local file.
+                    public class FileCache : TokenCache
+                    {
+                        public string CacheFilePath;
+                        private static readonly object FileLock = new object();
+                
+                        // Initializes the cache against a local file.
+                        // If the file is already rpesent, it loads its content in the ADAL cache
+                        public FileCache(string filePath)
+                        {
+                            CacheFilePath = filePath;
+                            this.AfterAccess = AfterAccessNotification;
+                            this.BeforeAccess = BeforeAccessNotification;
+                            lock (FileLock)
+                            {
+                                this.Deserialize(File.Exists(CacheFilePath) ? ProtectedData.Unprotect(File.ReadAllBytes(CacheFilePath), null, DataProtectionScope.CurrentUser) : null);
+                            }
+                        }
+                
+                        // Empties the persistent store.
+                        public override void Clear()
+                        {
+                            base.Clear();
+                            File.Delete(CacheFilePath);
+                        }
+                
+                        // Triggered right before ADAL needs to access the cache.
+                        // Reload the cache from the persistent store in case it changed since the last access.
+                         void BeforeAccessNotification(TokenCacheNotificationArgs args)
+                        {
+                            lock (FileLock)
+                            {
+                                this.Deserialize(File.Exists(CacheFilePath) ?  ProtectedData.Unprotect(File.ReadAllBytes(CacheFilePath),null,DataProtectionScope.CurrentUser) : null);
+                            }
+                        }
+                
+                        // Triggered right after ADAL accessed the cache.
+                        void AfterAccessNotification(TokenCacheNotificationArgs args)
+                        {
+                            // if the access operation resulted in a cache update
+                            if (this.HasStateChanged)
+                            {
+                                lock (FileLock)
+                                {                    
+                                    // reflect changes in the persistent store
+                                    File.WriteAllBytes(CacheFilePath, ProtectedData.Protect(this.Serialize(),null,DataProtectionScope.CurrentUser));
+                                    // once the write operation took place, restore the HasStateChanged bit to false
+                                    this.HasStateChanged = false;
+                                }                
+                            }
+                        }
+                    }
+                
+                }
+"@
+            try {
+                Add-Type -TypeDefinition $source -ReferencedAssemblies $assemblies
+            }
+            catch {}
+            $cache = New-Object TodoListClient.FileCache("c:\temp\$Domain.dat")
+            $authenticationContext = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext("https://login.windows.net/$Domain/",$cache)
+        }
+        else {
+            $authenticationContext = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext("https://login.windows.net/$Domain/")
+        }
+        $token = $authenticationContext.AcquireTokenSilentAsync($ResourceUri, $ApplicationID)
+        Start-Sleep -Seconds 1
+        if ($token.Exception) {
+            $platformParameters = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.PlatformParameters" -ArgumentList 'Auto'
+            $token = $authenticationContext.AcquireTokenAsync($ResourceUri, $ApplicationID, $RedirectUri, $platformParameters)
+            if ($token.Exception) {
+                throw $token.Exception
+            }
+            else {
+                $token.Wait()
+                Write-Output $token.Result
+            }
+        }
+        else {
+            $token.Wait()
+            Write-Output $token.Result
+        }
+    }
 }
 
 <#
@@ -41,17 +174,43 @@ function Get-MPCToken {
         # ID of application created in Azure Active Directory
         [Parameter(Mandatory=$true)]
         [string]$ApplicationID,
-        # User credential to access Azure Active Directory
-        [Parameter(Mandatory=$true)]
-        [pscredential]$Credential,
         # Partner domain prefix for onmicrosoft.com domain
         [Parameter(Mandatory=$true)]
-        [string]$PartnerDomainPrefix
+        [string]$PartnerDomainPrefix,
+        $MpcAzureAdToken,
+        [pscredential]$Credential,
+        [switch]$NullTokenCache,
+        $CustomTokenCache,
+        [switch]$FileCache
+
     )
-    $mpcAzureAdToken = Get-MPCAzureADToken -ApplicationID $ApplicationID -Credential $Credential -DomainPrefix $PartnerDomainPrefix -ErrorAction Stop
+    if (!$MpcAzureAdToken) {
+        $getMPCAzureADTokenParams = @{
+            ApplicationID = $ApplicationID
+            Domain = "$PartnerDomainPrefix.onmicrosoft.com"
+            ResourceUri = 'https://api.partnercenter.microsoft.com'
+            ErrorAction = 'Stop'
+        }
+        if ($NullTokenCache) {
+            $getMPCAzureADTokenParams.NullTokenCache = $true
+        }
+        elseif ($CustomTokenCache) {
+            $getMPCAzureADTokenParams.CustomTokenCache = $CustomTokenCache
+        }
+        elseif ($FileCache) {
+            $getMPCAzureADTokenParams.FileCache = $true
+        }
+        if ($Credential) {
+            $getMPCAzureADTokenParams.Credential = $Credential
+            $MpcAzureAdToken = (Get-MPCAzureADToken @getMPCAzureADTokenParams).access_token
+        }
+        else {
+            $MpcAzureAdToken = (Get-MPCAzureADToken @getMPCAzureADTokenParams).AccessToken
+        }
+    }
     $params = @{
         Uri = 'https://api.partnercenter.microsoft.com/generatetoken'
-        Headers = @{Authorization = "Bearer $($MPCAzureADToken.access_token)"}
+        Headers = @{Authorization = "Bearer $MPCAzureADToken"}
         Method = 'Post'
         Body = 'grant_type=jwt_token'
     }
@@ -389,5 +548,172 @@ function Update-MPCSubscription {
         Body = $body
     }
     Write-Verbose 'Updating quantity on subscription'
+    Write-Output (Invoke-WebRequest @params).Content.Substring(1) | ConvertFrom-Json
+}
+function Get-MPCAzureUsage {
+    [CmdletBinding()]
+    Param(
+        # Microsoft Partner Center authentication token
+        [Parameter(Mandatory=$true)]
+        [string]$MPCToken,
+        # Customer ID
+        [Parameter(Mandatory=$true)]
+        [string]$CustomerID,
+        # Subscription ID
+        [Parameter(Mandatory=$true)]
+        [pscustomobject]$SubscriptionID,
+        # Start time
+        [Parameter(Mandatory=$true)]
+        [datetime]$StartTime,
+        # End time
+        [Parameter(Mandatory=$true)]
+        [datetime]$EndTime,
+        # Defines the granularity of usage aggregations
+        [Parameter()]
+        [ValidateSet('daily','hourly')]
+        [string]$Granularity
+    )
+    $universalSortableStartTime = Get-Date -Date $StartTime -Format u
+    $universalSortableEndTime = Get-Date -Date $EndTime -Format u
+    $baseUri = 'https://api.partnercenter.microsoft.com/v1/'
+    $uri = $baseUri + "customers/$CustomerID/subscriptions/$SubscriptionID/utilizations/azure?" +
+        "start_time=$universalSortableStartTime&end_time=$universalSortableEndTime"
+    if ($Granularity) {
+        $uri += "&granularity=$Granularity"
+    }
+    $headers = @{Authorization = "Bearer $MPCToken"}
+    $params = @{
+        Uri = $uri
+        Headers = $headers
+        Method = 'Get'
+        ContentType = 'application/json'
+    }
+    $items = @()
+    $totalCount = 0
+    $result = (Invoke-WebRequest @params).Content.Substring(1) | ConvertFrom-Json
+    $items += $result.items
+    $totalCount += $result.totalCount
+    if ($result.links.next) {
+        do {
+            $params2 = $params.Clone()
+            $params2.Uri = $baseUri + $result.links.next.uri
+            $headers2 = $headers.Clone()
+            $headers2.Add($result.links.next.headers.key, $result.links.next.headers.value)
+            $params2.Headers = $headers2
+            $result = (Invoke-WebRequest @params2).Content.Substring(1) | ConvertFrom-Json
+            $items += $result.items
+            $totalCount += $result.totalCount
+        }
+        until ($null -eq $result.links.next)
+    }
+    $output = [pscustomobject]@{
+        totalCount = $totalCount
+        items = $items
+        links = $result.links
+    }
+    Write-Output $output
+}
+function Get-MPCCustomerServiceCostsSummary {
+    [CmdletBinding()]
+    Param(
+        # Microsoft Partner Center authentication token
+        [Parameter(Mandatory=$true)]
+        [string]$MPCToken,
+        # Customer ID
+        [Parameter(Mandatory=$true)]
+        [string]$CustomerID
+    )
+    $params = @{
+        Uri = "https://api.partnercenter.microsoft.com/v1/customers/$CustomerID/servicecosts/mostrecent"
+        Headers = @{Authorization = "Bearer $MPCToken"}
+        Method = 'Get'
+        ContentType = 'application/json'
+    }
+    Write-Output ($result = Invoke-WebRequest @params).Content.Substring(1) | ConvertFrom-Json
+}
+function Get-MPCCustomerUsageSummary {
+    [CmdletBinding()]
+    Param(
+        # Microsoft Partner Center authentication token
+        [Parameter(Mandatory=$true)]
+        [string]$MPCToken,
+        # Customer ID
+        [Parameter(Mandatory=$true)]
+        [string]$CustomerID
+    )
+    $params = @{
+        Uri = "https://api.partnercenter.microsoft.com/v1/customers/$CustomerID/usagesummary"
+        Headers = @{Authorization = "Bearer $MPCToken"}
+        Method = 'Get'
+        ContentType = 'application/json'
+    }
+    Write-Output ($result = Invoke-WebRequest @params).Content.Substring(1) | ConvertFrom-Json
+}
+function Get-MPCSubscriptionUsage {
+    [CmdletBinding()]
+    Param(
+        # Microsoft Partner Center authentication token
+        [Parameter(Mandatory=$true)]
+        [string]$MPCToken,
+        # Customer ID
+        [Parameter(Mandatory=$true)]
+        [string]$CustomerID,
+        # Subscription ID
+        [Parameter(Mandatory=$true)]
+        [pscustomobject]$SubscriptionID
+    )
+    $params = @{
+        Uri = "https://api.partnercenter.microsoft.com/v1/customers/$CustomerID/subscriptions/$SubscriptionID/usagerecords/resources"
+        Headers = @{Authorization = "Bearer $MPCToken"}
+        Method = 'Get'
+        ContentType = 'application/json'
+    }
+    Write-Output ($result = Invoke-WebRequest @params).Content.Substring(1) | ConvertFrom-Json
+}
+function Get-MPCInvoices {
+    [CmdletBinding()]
+    Param(
+        # Microsoft Partner Center authentication token
+        [Parameter(Mandatory=$true)]
+        [string]$MPCToken
+    )
+    $params = @{
+        Uri = "https://api.partnercenter.microsoft.com/v1/invoices"
+        Headers = @{Authorization = "Bearer $MPCToken"}
+        Method = 'Get'
+        ContentType = 'application/json'
+    }
+    Write-Output ($result = Invoke-WebRequest @params).Content.Substring(1) | ConvertFrom-Json
+}
+function Get-MPCAzurePrices {
+    [CmdletBinding()]
+    Param(
+        # Microsoft Partner Center authentication token
+        [Parameter(Mandatory=$true)]
+        [string]$MPCToken
+    )
+    $params = @{
+        Uri = "https://api.partnercenter.microsoft.com/v1/ratecards/azure"
+        Headers = @{Authorization = "Bearer $MPCToken"}
+        Method = 'Get'
+        ContentType = 'application/json'
+    }
+    Write-Output ($result = Invoke-WebRequest @params).Content.Substring(1) | ConvertFrom-Json
+}
+function Get-MPCCustomers {
+    [CmdletBinding()]
+    Param(
+        # Microsoft Partner Center authentication token
+        [Parameter(Mandatory=$true)]
+        [string]$MPCToken
+    )
+    $Uri = 'https://api.partnercenter.microsoft.com/v1/customers'
+    $params = @{
+        Uri = $Uri
+        Headers = @{Authorization = "Bearer $MPCToken"}
+        Method = 'Get'
+        ContentType = 'application/json'
+    }
+    Write-Verbose 'Getting customers'
     Write-Output (Invoke-WebRequest @params).Content.Substring(1) | ConvertFrom-Json
 }
